@@ -3,9 +3,15 @@
 import ctypes
 import os
 import sys
+import struct
 import platform
 
 from .constants import *
+
+# determine whether python is running in 32-bit or 64-bit
+# if on Windows 32-bit or Linux, load the gpib-32.dll library
+# if on Windows 64-bit, load the ni4882.dll library
+target_lib = 'ni4882.dll' if (struct.calcsize("P") * 8 == 64 and platform.system() == 'Windows') else 'gpib-32.dll'
 
 # load the GPIB dynamic library using ctypes
 _lib = None
@@ -27,11 +33,10 @@ def _load_lib(filename=None):
 
     if platform.system() == "Windows":
         libnames = [filename] if filename else \
-                   ['gpib-32.dll',
-                    'c:\\windows\\system32\\gpib-32.dll',
-                    'c:\\windows\\system\\gpib-32.dll',
-                    'c:\\gpib\\gpib-32.dll',
-                    'gpib-32.so', 'libgpib.so.0']
+                   [target_lib,
+                    'c:\\windows\\system32\\%s' % target_lib,
+                    'c:\\windows\\system\\%s' % target_lib,
+                    'c:\\gpib\\%s' % target_lib]
         loader = ctypes.windll.LoadLibrary
     else:
         # most likely Linux with linux-gpib
@@ -62,80 +67,155 @@ def _load_lib(filename=None):
         _lib = MockGPIB()
         return False
 
+
     # prepare ctypes bindings
-    for name, argtypes, restype in (
-        ("ibask", [ctypes.c_int, ctypes.c_int,
-                   ctypes.POINTER(ctypes.c_int)], ctypes.c_int),
-        ("ibclr", [ctypes.c_int], ctypes.c_int),
-        ("ibcmd", [ctypes.c_int, ctypes.c_char_p, ctypes.c_long], ctypes.c_int),
-        ("ibconfig", [ctypes.c_int, ctypes.c_int, ctypes.c_int], ctypes.c_int),
-        ("ibdev", [ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                   ctypes.c_int, ctypes.c_int, ctypes.c_int], ctypes.c_int),
-        ("ibln", [ctypes.c_int, ctypes.c_int, ctypes.c_int,
-                  ctypes.POINTER(ctypes.c_short)], ctypes.c_int),
-        ("ibloc", [ctypes.c_int], ctypes.c_int),
-        ("ibonl", [ctypes.c_int, ctypes.c_int], ctypes.c_int),
-        ("ibrd", [ctypes.c_int, ctypes.c_char_p, ctypes.c_long], ctypes.c_int),
-        ("ibrsp", [ctypes.c_int, ctypes.c_char_p], ctypes.c_int),
-        ("ibsic", [ctypes.c_int], ctypes.c_int),
-        ("ibsre", [ctypes.c_int, ctypes.c_int], ctypes.c_int),
-        ("ibtmo", [ctypes.c_int, ctypes.c_int], ctypes.c_int),
-        ("ibtrg", [ctypes.c_int], ctypes.c_int),
-        ("ibwait", [ctypes.c_int, ctypes.c_int], ctypes.c_int),
-        ("ibwrta", [ctypes.c_int, ctypes.c_char_p,
-                    ctypes.c_long], ctypes.c_int),
-        ("ibwrt", [ctypes.c_int, ctypes.c_char_p, ctypes.c_long], ctypes.c_int),
-        ("iblines", [ctypes.c_int, ctypes.POINTER(
-            ctypes.c_short)], ctypes.c_int)
-    ):
-        libfunction = _lib[name]
-        libfunction.argtypes = argtypes
-        libfunction.restype = restype
+    if target_lib == 'ni4882.dll':
+        for name, argtypes, restype in (
+            ("ibask", [ctypes.c_int, ctypes.c_int,
+                       ctypes.POINTER(ctypes.c_int)], ctypes.c_long),
+            ("ibclr", [ctypes.c_int], ctypes.c_long),
+            ("ibcmd", [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t], ctypes.c_long),
+            ("ibconfig", [ctypes.c_int, ctypes.c_int, ctypes.c_int], ctypes.c_long),
+            ("ibdev", [ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                       ctypes.c_int, ctypes.c_int, ctypes.c_int], ctypes.c_int),
+            ("ibln", [ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                      ctypes.POINTER(ctypes.c_short)], ctypes.c_long),
+            ("ibloc", [ctypes.c_int], ctypes.c_long),
+            ("ibonl", [ctypes.c_int, ctypes.c_int], ctypes.c_long),
+            ("ibrd", [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t], ctypes.c_long),
+            ("ibrsp", [ctypes.c_int, ctypes.c_char_p], ctypes.c_long),
+            ("ibsic", [ctypes.c_int], ctypes.c_long),
+            ("ibtrg", [ctypes.c_int], ctypes.c_long),
+            ("ibwait", [ctypes.c_int, ctypes.c_int], ctypes.c_long),
+            ("ibwrta", [ctypes.c_int, ctypes.c_void_p,
+                        ctypes.c_size_t], ctypes.c_long),
+            ("ibwrt", [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t], ctypes.c_long),
+            ("iblines", [ctypes.c_int, ctypes.POINTER(
+                ctypes.c_short)], ctypes.c_long)
+        ):
+            libfunction = _lib[name]
+            libfunction.argtypes = argtypes
+            libfunction.restype = restype
 
-    # implementation-specific special cases
-    try:
-        _old_ibfind = _lib.ibfind
-        _old_ibfind.argtypes = [ctypes.c_char_p]
-        _old_ibfind.restype = ctypes.c_int
-        setattr(_lib, "ibfind", lambda name: _old_ibfind(name.encode('ascii')))
-    except AttributeError:
-        # Windows Unicode version ibfindW
-        _lib.ibfindW.argtypes = [ctypes.c_wchar_p]
-        _lib.ibfindW.restype = ctypes.c_int
-        setattr(_lib, "ibfind", _lib.ibfindW)
+        # implementation-specific special cases
+        try:
+            _old_ibfind = _lib.ibfind
+            _old_ibfind.argtypes = [ctypes.c_char_p]
+            _old_ibfind.restype = ctypes.c_int
+            setattr(_lib, "ibfind", lambda name: _old_ibfind(name.encode('ascii')))
+        except AttributeError:
+            # Windows Unicode version ibfindW
+            _lib.ibfindW.argtypes = [ctypes.c_wchar_p]
+            _lib.ibfindW.restype = ctypes.c_int
+            setattr(_lib, "ibfind", _lib.ibfindW)
 
-    try:
-        _lib.ibspb.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_short)]
-        _lib.ibspb.restype = ctypes.c_int
-    except AttributeError:
-        # some Windows GPIB libraries do not provide ibsp
-        # but maybe it is not needed, so gently warn the user it is missing
-        import warnings
-        message = "{:s} does not implement ibspb() on this platform.".format(
-            _lib._name)
-        warnings.warn(message, ImportWarning)
+        try:
+            _lib.ibspb.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_short)]
+            _lib.ibspb.restype = ctypes.c_int
+        except AttributeError:
+            # some Windows GPIB libraries do not provide ibsp
+            # but maybe it is not needed, so gently warn the user it is missing
+            import warnings
+            message = "{:s} does not implement ibspb() on this platform.".format(
+                _lib._name)
+            warnings.warn(message, ImportWarning)
 
-        def _ibspb(*args):
-            raise NotImplementedError(message)
-        setattr(_lib, "ibspb", _ibspb)
+            def _ibspb(*args):
+                raise NotImplementedError(message)
+            setattr(_lib, "ibspb", _ibspb)
 
-    try:
-        _lib.ThreadIbsta.restype = ctypes.c_int
-        setattr(_lib, "getibsta", _lib.ThreadIbsta)
-    except AttributeError:
-        setattr(_lib, "getibsta", lambda: ctypes.c_int.in_dll(_lib, "ibsta"))
+        try:
+            _lib.ThreadIbsta.restype = ctypes.c_long
+            setattr(_lib, "getibsta", _lib.ThreadIbsta)
+        except AttributeError:
+            setattr(_lib, "getibsta", lambda: ctypes.c_long.in_dll(_lib, "ibsta"))
 
-    try:
-        _lib.ThreadIbcntl.restype = ctypes.c_long
-        setattr(_lib, "getibcntl", _lib.ThreadIbcntl)
-    except AttributeError:
-        setattr(_lib, "getibcntl", lambda: ctypes.c_long.in_dll(_lib, "ibcntl"))
+        try:
+            _lib.ThreadIbcnt.restype = ctypes.c_long
+            setattr(_lib, "getibcnt", _lib.ThreadIbcnt)
+        except AttributeError:
+            setattr(_lib, "getibcnt", lambda: ctypes.c_long.in_dll(_lib, "ibcnt"))
 
-    try:
-        _lib.ThreadIberr.restype = ctypes.c_int
-        setattr(_lib, "getiberr", _lib.ThreadIberr)
-    except AttributeError:
-        setattr(_lib, "getiberr", lambda: ctypes.c_int.in_dll(_lib, "iberr"))
+        try:
+            _lib.ThreadIberr.restype = ctypes.c_long
+            setattr(_lib, "getiberr", _lib.ThreadIberr)
+        except AttributeError:
+            setattr(_lib, "getiberr", lambda: ctypes.c_long.in_dll(_lib, "iberr"))
+
+    else:
+        for name, argtypes, restype in (
+            ("ibask", [ctypes.c_int, ctypes.c_int,
+                       ctypes.POINTER(ctypes.c_int)], ctypes.c_int),
+            ("ibclr", [ctypes.c_int], ctypes.c_int),
+            ("ibcmd", [ctypes.c_int, ctypes.c_char_p, ctypes.c_long], ctypes.c_int),
+            ("ibconfig", [ctypes.c_int, ctypes.c_int, ctypes.c_int], ctypes.c_int),
+            ("ibdev", [ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                       ctypes.c_int, ctypes.c_int, ctypes.c_int], ctypes.c_int),
+            ("ibln", [ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                      ctypes.POINTER(ctypes.c_short)], ctypes.c_int),
+            ("ibloc", [ctypes.c_int], ctypes.c_int),
+            ("ibonl", [ctypes.c_int, ctypes.c_int], ctypes.c_int),
+            ("ibrd", [ctypes.c_int, ctypes.c_char_p, ctypes.c_long], ctypes.c_int),
+            ("ibrsp", [ctypes.c_int, ctypes.c_char_p], ctypes.c_int),
+            ("ibsic", [ctypes.c_int], ctypes.c_int),
+            ("ibtrg", [ctypes.c_int], ctypes.c_int),
+            ("ibwait", [ctypes.c_int, ctypes.c_int], ctypes.c_int),
+            ("ibsre", [ctypes.c_int, ctypes.c_int], ctypes.c_int),
+            ("ibtmo", [ctypes.c_int, ctypes.c_int], ctypes.c_int),
+            ("ibwrta", [ctypes.c_int, ctypes.c_char_p,
+                        ctypes.c_long], ctypes.c_int),
+            ("ibwrt", [ctypes.c_int, ctypes.c_char_p, ctypes.c_long], ctypes.c_int),
+            ("iblines", [ctypes.c_int, ctypes.POINTER(
+                ctypes.c_short)], ctypes.c_int)
+        ):
+            libfunction = _lib[name]
+            libfunction.argtypes = argtypes
+            libfunction.restype = restype
+
+        # implementation-specific special cases
+        try:
+            _old_ibfind = _lib.ibfind
+            _old_ibfind.argtypes = [ctypes.c_char_p]
+            _old_ibfind.restype = ctypes.c_int
+            setattr(_lib, "ibfind", lambda name: _old_ibfind(name.encode('ascii')))
+        except AttributeError:
+            # Windows Unicode version ibfindW
+            _lib.ibfindW.argtypes = [ctypes.c_wchar_p]
+            _lib.ibfindW.restype = ctypes.c_int
+            setattr(_lib, "ibfind", _lib.ibfindW)
+
+        try:
+            _lib.ibspb.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_short)]
+            _lib.ibspb.restype = ctypes.c_int
+        except AttributeError:
+            # some Windows GPIB libraries do not provide ibsp
+            # but maybe it is not needed, so gently warn the user it is missing
+            import warnings
+            message = "{:s} does not implement ibspb() on this platform.".format(
+                _lib._name)
+            warnings.warn(message, ImportWarning)
+
+            def _ibspb(*args):
+                raise NotImplementedError(message)
+            setattr(_lib, "ibspb", _ibspb)
+
+        try:
+            _lib.ThreadIbsta.restype = ctypes.c_int
+            setattr(_lib, "getibsta", _lib.ThreadIbsta)
+        except AttributeError:
+            setattr(_lib, "getibsta", lambda: ctypes.c_int.in_dll(_lib, "ibsta"))
+
+        try:
+            _lib.ThreadIbcntl.restype = ctypes.c_long
+            setattr(_lib, "getibcntl", _lib.ThreadIbcntl)
+        except AttributeError:
+            setattr(_lib, "getibcntl", lambda: ctypes.c_long.in_dll(_lib, "ibcntl"))
+
+        try:
+            _lib.ThreadIberr.restype = ctypes.c_int
+            setattr(_lib, "getiberr", _lib.ThreadIberr)
+        except AttributeError:
+            setattr(_lib, "getiberr", lambda: ctypes.c_int.in_dll(_lib, "iberr"))
 
     return True
 
@@ -330,6 +410,8 @@ def ibcnt():
         int: number of transferred bytes
     """
 
+    if target_lib == 'ni4882.dll':
+        return _lib.getibcnt()
     return _lib.getibcntl()
 
 
@@ -452,7 +534,10 @@ def remote_enable(handle, enable):
         int: ibsta value
     """
 
-    sta = _lib.ibsre(handle, enable)
+    if target_lib == 'ni4882.dll':
+        sta = _lib.ibconfig(handle, IbcSRE, enable)
+    else:
+        sta = _lib.ibsre(handle, enable)
     if sta & ERR:
         raise GpibError("remote_enable")
 
@@ -508,7 +593,10 @@ def timeout(handle, t):
         int: ibsta value
     """
 
-    sta = _lib.ibtmo(handle, t)
+    if target_lib == 'ni4882.dll':
+        sta = _lib.ibconfig(handle, IbcTMO, t)
+    else:
+        sta = _lib.ibtmo(handle, t)
     if sta & ERR:
         raise GpibError("timeout")
 
